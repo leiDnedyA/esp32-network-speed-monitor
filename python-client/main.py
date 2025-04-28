@@ -1,4 +1,3 @@
-
 import os
 import configparser
 import serial
@@ -20,39 +19,56 @@ def find_esp32_port():
 
 def ask_for_root_password():
     root = tk.Tk()
-    root.withdraw()  # Hide the main window
+    root.withdraw()
     password = simpledialog.askstring("Root Password", "Enter root password:", show="*")
     root.destroy()
     return password
+
+def get_available_wifi_ssids():
+    try:
+        result = subprocess.run(
+            ["nmcli", "-f", "SSID", "dev", "wifi", "list"],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            universal_newlines=True
+        )
+        if result.returncode != 0:
+            print(f"Error getting available SSIDs: {result.stderr}")
+            return set()
+
+        lines = result.stdout.strip().split("\n")[1:]  # Skip header
+        ssids = set(line.strip() for line in lines if line.strip())
+        print(f"Available SSIDs: {ssids}")
+        return ssids
+    except Exception as e:
+        print(f"Exception while getting available SSIDs: {e}")
+        return set()
 
 def get_known_wifi_list():
     wifi_list = []
     password = ask_for_root_password()
     if not password:
         print("No password provided. Exiting.")
-        return wifi_list  # Exit early, no password
+        return wifi_list
+
+    available_ssids = get_available_wifi_ssids()
 
     try:
         files = sorted(os.listdir(CONNECTIONS_PATH))
         for fname in files:
             full_path = os.path.join(CONNECTIONS_PATH, fname)
-            
-            if not password:
-                print(f"Skipping {full_path}: no password available.")
-                continue
 
             file_content = read_connection_file_as_root(password, full_path)
             if file_content is None:
                 continue
 
-            # Save content temporarily to parse with configparser
             with tempfile.NamedTemporaryFile("w+", delete=False) as tmpfile:
                 tmpfile.write(file_content)
                 tmpfile_path = tmpfile.name
 
             config = configparser.ConfigParser()
             config.read(tmpfile_path)
-            os.unlink(tmpfile_path)  # Clean up temp file
+            os.unlink(tmpfile_path)
 
             if "wifi" in config and "wifi-security" in config:
                 ssid = config["wifi"].get("ssid")
@@ -62,12 +78,13 @@ def get_known_wifi_list():
                 except Exception as e:
                     print(f"Error decoding SSID: {e}")
                 wifi_password = config["wifi-security"].get("psk")
-                if ssid and wifi_password:
+
+                if ssid and wifi_password and ssid in available_ssids:
                     wifi_list.append((ssid, wifi_password))
     except Exception as e:
         print(f"Error reading Wi-Fi info: {e}")
 
-    print(wifi_list)
+    print(f"Filtered known wifi list: {wifi_list}")
     return wifi_list
 
 def read_connection_file_as_root(password, filepath):
@@ -119,6 +136,8 @@ def listen_for_fastest_network(ser):
         if line.startswith("[NEW_FASTEST]"):
             fastest_ssid = line.split("]")[1].strip()
             print(f"\n🚀 New fastest network detected: {fastest_ssid}")
+            # Check the current SSID in case of change
+            current_ssid = get_current_connection()
             if fastest_ssid and fastest_ssid != current_ssid:
                 print(f"🔍 Currently on: {current_ssid}, switching to: {fastest_ssid}")
                 switch_to_network(fastest_ssid)
@@ -138,7 +157,7 @@ def main():
         return
 
     ser = serial.Serial(port, 115200, timeout=8)
-    time.sleep(2)  # Wait for ESP32 reset
+    time.sleep(2)
 
     send_all_wifi_credentials(ser, networks)
     listen_for_fastest_network(ser)
