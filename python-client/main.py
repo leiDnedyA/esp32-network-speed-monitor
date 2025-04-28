@@ -1,9 +1,11 @@
+#!/usr/bin/env python3
 import os
 import configparser
 import serial
 import time
 import subprocess
 from serial.tools import list_ports
+import threading
 import tkinter as tk
 from tkinter import simpledialog, messagebox
 import tempfile
@@ -11,8 +13,7 @@ import tempfile
 CONNECTIONS_PATH = "/etc/NetworkManager/system-connections/"
 
 def find_esp32_port():
-    ports = list_ports.comports()
-    for port in ports:
+    for port in list_ports.comports():
         if "USB" in port.device or "ttyACM" in port.device:
             return port.device
     return None
@@ -20,146 +21,138 @@ def find_esp32_port():
 def ask_for_root_password():
     root = tk.Tk()
     root.withdraw()
-    password = simpledialog.askstring("Root Password", "Enter root password:", show="*")
+    pw = simpledialog.askstring("Root Password", "Enter root password:", show="*")
     root.destroy()
-    return password
+    return pw
 
 def get_available_wifi_ssids():
     try:
         result = subprocess.run(
             ["nmcli", "-f", "SSID", "dev", "wifi", "list"],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            universal_newlines=True
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True
         )
         if result.returncode != 0:
-            print(f"Error getting available SSIDs: {result.stderr}")
+            print(f"Error listing SSIDs: {result.stderr.strip()}")
             return set()
-
-        lines = result.stdout.strip().split("\n")[1:]  # Skip header
-        ssids = set(line.strip() for line in lines if line.strip())
-        print(f"Available SSIDs: {ssids}")
-        return ssids
+        lines = result.stdout.strip().splitlines()[1:]
+        return {line.strip() for line in lines if line.strip()}
     except Exception as e:
-        print(f"Exception while getting available SSIDs: {e}")
+        print(f"Exception in get_available_wifi_ssids: {e}")
         return set()
 
-def get_known_wifi_list():
-    wifi_list = []
-    password = ask_for_root_password()
-    if not password:
-        print("No password provided. Exiting.")
-        return wifi_list
-
-    available_ssids = get_available_wifi_ssids()
-
-    try:
-        files = sorted(os.listdir(CONNECTIONS_PATH))
-        for fname in files:
-            full_path = os.path.join(CONNECTIONS_PATH, fname)
-
-            file_content = read_connection_file_as_root(password, full_path)
-            if file_content is None:
-                continue
-
-            with tempfile.NamedTemporaryFile("w+", delete=False) as tmpfile:
-                tmpfile.write(file_content)
-                tmpfile_path = tmpfile.name
-
-            config = configparser.ConfigParser()
-            config.read(tmpfile_path)
-            os.unlink(tmpfile_path)
-
-            if "wifi" in config and "wifi-security" in config:
-                ssid = config["wifi"].get("ssid")
-                try:
-                    if ssid and ';' in ssid:
-                        ssid = ''.join([chr(int(n)) for n in ssid.split(';')[:-1]])
-                except Exception as e:
-                    print(f"Error decoding SSID: {e}")
-                wifi_password = config["wifi-security"].get("psk")
-
-                if ssid and wifi_password and ssid in available_ssids:
-                    wifi_list.append((ssid, wifi_password))
-    except Exception as e:
-        print(f"Error reading Wi-Fi info: {e}")
-
-    print(f"Filtered known wifi list: {wifi_list}")
-    return wifi_list
-
 def read_connection_file_as_root(password, filepath):
-    if not password:
-        print(f"Cannot read {filepath}: password is None.")
-        return None
     try:
-        result = subprocess.run(
+        proc = subprocess.run(
             ["sudo", "-S", "cat", filepath],
             input=(password + "\n").encode(),
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE
         )
-        if result.returncode == 0:
-            return result.stdout.decode()
+        if proc.returncode == 0:
+            return proc.stdout.decode()
         else:
-            print(f"Failed to read {filepath}: {result.stderr.decode()}")
+            print(f"sudo cat {filepath} failed: {proc.stderr.decode().strip()}")
             return None
     except Exception as e:
-        print(f"Exception while reading {filepath}: {e}")
+        print(f"Exception reading {filepath}: {e}")
         return None
 
+def get_known_wifi_list(password):
+    """Return list of (ssid, psk) for known networks currently in range."""
+    available = get_available_wifi_ssids()
+    wifi_list = []
+    for fname in sorted(os.listdir(CONNECTIONS_PATH)):
+        path = os.path.join(CONNECTIONS_PATH, fname)
+        content = read_connection_file_as_root(password, path)
+        if not content:
+            continue
+        # parse
+        cfg = configparser.ConfigParser()
+        with tempfile.NamedTemporaryFile("w+", delete=False) as tmp:
+            tmp.write(content)
+            tmp.flush()
+            tmp_path = tmp.name
+        cfg.read(tmp_path)
+        os.unlink(tmp_path)
+        if "wifi" in cfg and "wifi-security" in cfg:
+            ssid = cfg["wifi"].get("ssid")
+            psk = cfg["wifi-security"].get("psk")
+            if ssid and psk and ssid in available:
+                wifi_list.append((ssid, psk))
+    print(f"🏷️  Known in-range networks: {[s for s,_ in wifi_list]}")
+    return wifi_list
+
 def send_all_wifi_credentials(ser, networks):
-    formatted = ",".join([f"{ssid}:{password}" for ssid, password in networks]) + "\n"
-    ser.write(formatted.encode())
-    print(f"📤 Sent network list to ESP32 ({len(networks)} networks).")
+    payload = ",".join(f"{s}:{p}" for s,p in networks) + "\n"
+    ser.write(payload.encode())
+    print(f"📤 Sent {len(networks)} networks to ESP32")
+
+def poll_for_changes(ser, password, interval=5):
+    prev_ssids = set()
+    while True:
+        time.sleep(interval)
+        new_list = get_known_wifi_list(password)
+        new_ssids = {s for s,_ in new_list}
+        if new_ssids != prev_ssids:
+            print("🔄 Wi-Fi list changed, updating ESP32…")
+            send_all_wifi_credentials(ser, new_list)
+            prev_ssids = new_ssids
 
 def get_current_connection():
-    result = subprocess.run(
-        ["/usr/bin/nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
-        stdout=subprocess.PIPE,
-        universal_newlines=True
+    res = subprocess.run(
+        ["nmcli", "-t", "-f", "active,ssid", "dev", "wifi"],
+        stdout=subprocess.PIPE, text=True
     )
-    for line in result.stdout.strip().splitlines():
+    for line in res.stdout.splitlines():
         if line.startswith("yes:"):
-            return line.split(":")[1]
+            return line.split(":",1)[1]
     return None
 
 def switch_to_network(ssid):
-    print(f"🔄 Switching to {ssid}...")
-    subprocess.run(["/usr/bin/nmcli", "device", "wifi", "connect", ssid])
+    print(f"🔀 Switching to {ssid} …")
+    subprocess.run(["nmcli", "device", "wifi", "connect", ssid])
 
 def listen_for_fastest_network(ser):
-    current_ssid = get_current_connection()
-    print(f"📡 Listening for fastest network updates... Currently connected to: {current_ssid or 'None'}")
-
+    current = get_current_connection()
+    print(f"📡 Listening for new-fastest (now on: {current})")
     while True:
-        line = ser.readline().decode(errors='ignore').strip()
+        line = ser.readline().decode(errors="ignore").strip()
+        if not line:
+            continue
         if line.startswith("[NEW_FASTEST]"):
-            fastest_ssid = line.split("]")[1].strip()
-            print(f"\n🚀 New fastest network detected: {fastest_ssid}")
-            # Check the current SSID in case of change
-            current_ssid = get_current_connection()
-            if fastest_ssid and fastest_ssid != current_ssid:
-                print(f"🔍 Currently on: {current_ssid}, switching to: {fastest_ssid}")
-                switch_to_network(fastest_ssid)
-                current_ssid = fastest_ssid
-        elif line:
+            best = line.split("]",1)[1].strip()
+            print(f"🚀 New fastest: {best}")
+            if best != current:
+                switch_to_network(best)
+                current = best
+        else:
             print(f"[ESP32] {line}")
 
 def main():
     port = find_esp32_port()
     if not port:
-        print("ESP32 not found.")
+        print("❌ ESP32 serial port not found.")
         return
 
-    networks = get_known_wifi_list()
-    if not networks:
-        print("No known networks found.")
+    password = ask_for_root_password()
+    if not password:
+        print("❌ No root password provided.")
         return
 
-    ser = serial.Serial(port, 115200, timeout=8)
-    time.sleep(2)
+    ser = serial.Serial(port, 115200, timeout=1)
+    time.sleep(2)  # allow ESP32 to reset
+    initial = get_known_wifi_list(password)
+    if not initial:
+        print("⚠️  No known networks in range. Exiting.")
+        return
 
-    send_all_wifi_credentials(ser, networks)
+    send_all_wifi_credentials(ser, initial)
+    # start background poller
+    poll_thread = threading.Thread(
+        target=poll_for_changes, args=(ser, password), daemon=True
+    )
+    poll_thread.start()
+
+    # now block on listening for fastest
     listen_for_fastest_network(ser)
 
 if __name__ == "__main__":
