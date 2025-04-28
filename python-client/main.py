@@ -1,9 +1,13 @@
+
 import os
 import configparser
 import serial
 import time
 import subprocess
 from serial.tools import list_ports
+import tkinter as tk
+from tkinter import simpledialog, messagebox
+import tempfile
 
 CONNECTIONS_PATH = "/etc/NetworkManager/system-connections/"
 
@@ -14,35 +18,77 @@ def find_esp32_port():
             return port.device
     return None
 
+def ask_for_root_password():
+    root = tk.Tk()
+    root.withdraw()  # Hide the main window
+    password = simpledialog.askstring("Root Password", "Enter root password:", show="*")
+    root.destroy()
+    return password
+
 def get_known_wifi_list():
     wifi_list = []
+    password = ask_for_root_password()
+    if not password:
+        print("No password provided. Exiting.")
+        return wifi_list  # Exit early, no password
+
     try:
         files = sorted(os.listdir(CONNECTIONS_PATH))
-        print(os.listdir(CONNECTIONS_PATH))
         for fname in files:
             full_path = os.path.join(CONNECTIONS_PATH, fname)
+            
+            if not password:
+                print(f"Skipping {full_path}: no password available.")
+                continue
+
+            file_content = read_connection_file_as_root(password, full_path)
+            if file_content is None:
+                continue
+
+            # Save content temporarily to parse with configparser
+            with tempfile.NamedTemporaryFile("w+", delete=False) as tmpfile:
+                tmpfile.write(file_content)
+                tmpfile_path = tmpfile.name
+
             config = configparser.ConfigParser()
-            config.read(full_path)
+            config.read(tmpfile_path)
+            os.unlink(tmpfile_path)  # Clean up temp file
 
             if "wifi" in config and "wifi-security" in config:
                 ssid = config["wifi"].get("ssid")
                 try:
-                    if ';' in ssid:
-                        # Decode ssid of format cc;cc;cc;cc; where cc is an ascii code
-                        print(ssid)
-                        # ssid = [chr(int(n)) for n in ssid.split(';')[:-1]].join('')
-                        print([chr(int(n)) for n in ssid.split(';')[:-1]])
-                        print(ssid)
-                except:
-                    print('err')
-                    pass
-                password = config["wifi-security"].get("psk")
-                if ssid and password:
-                    wifi_list.append((ssid, password))
+                    if ssid and ';' in ssid:
+                        ssid = ''.join([chr(int(n)) for n in ssid.split(';')[:-1]])
+                except Exception as e:
+                    print(f"Error decoding SSID: {e}")
+                wifi_password = config["wifi-security"].get("psk")
+                if ssid and wifi_password:
+                    wifi_list.append((ssid, wifi_password))
     except Exception as e:
         print(f"Error reading Wi-Fi info: {e}")
+
     print(wifi_list)
     return wifi_list
+
+def read_connection_file_as_root(password, filepath):
+    if not password:
+        print(f"Cannot read {filepath}: password is None.")
+        return None
+    try:
+        result = subprocess.run(
+            ["sudo", "-S", "cat", filepath],
+            input=(password + "\n").encode(),
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE
+        )
+        if result.returncode == 0:
+            return result.stdout.decode()
+        else:
+            print(f"Failed to read {filepath}: {result.stderr.decode()}")
+            return None
+    except Exception as e:
+        print(f"Exception while reading {filepath}: {e}")
+        return None
 
 def send_all_wifi_credentials(ser, networks):
     formatted = ",".join([f"{ssid}:{password}" for ssid, password in networks]) + "\n"
