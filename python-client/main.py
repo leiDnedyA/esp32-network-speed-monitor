@@ -57,7 +57,7 @@ def read_connection_file_as_root(password, filepath):
         return None
 
 def get_known_wifi_list(password):
-    """Return list of (ssid, psk) for known networks currently in range."""
+    """Return list of networks for known networks currently in range."""
     available = get_available_wifi_ssids()
     wifi_set = set()
     for fname in sorted(os.listdir(CONNECTIONS_PATH)):
@@ -65,7 +65,6 @@ def get_known_wifi_list(password):
         content = read_connection_file_as_root(password, path)
         if not content:
             continue
-        # parse
         cfg = configparser.ConfigParser()
         with tempfile.NamedTemporaryFile("w+", delete=False) as tmp:
             tmp.write(content)
@@ -75,27 +74,36 @@ def get_known_wifi_list(password):
         os.unlink(tmp_path)
         if "wifi" in cfg and "wifi-security" in cfg:
             ssid = cfg["wifi"].get("ssid")
-            psk = cfg["wifi-security"].get("psk")
-            if ssid and psk and ssid in available:
-                wifi_set.add((ssid, psk))
-    print(f"🏷️  Known in-range networks: {[s for s,_ in wifi_set]}")
+            if "wifi-security" in cfg and cfg["wifi-security"].get("psk"):
+                psk = cfg["wifi-security"].get("psk")
+                if ssid and psk and ssid in available:
+                    wifi_set.add((ssid, psk))
+            elif "802-1x" in cfg:
+                identity = cfg["802-1x"].get("identity")
+                password = cfg["802-1x"].get("password")
+                if ssid and identity and password and ssid in available:
+                    wifi_set.add((ssid, identity, password))
     return list(wifi_set)
 
-def send_all_wifi_credentials(ser, networks):
-    payload = ",".join(f"{s}:{p}" for s,p in networks) + "\n"
-    ser.write(payload.encode())
-    print(f"Sent {len(networks)} networks to ESP32")
+def stringify_network(network):
+    return ":".join(list(network))
 
-def poll_for_changes(ser, password, interval=5):
-    prev_ssids = set()
+def send_all_wifi_credentials(ser, networks):
+    payload = ",".join(stringify_network(n) for n in networks) + "\n"
+    ser.write(payload.encode())
+    print(f"Sent {len(networks)} networks to ESP32: [{[n[0] for n in networks]}]")
+
+def poll_for_changes(ser, password, interval=5, avail_networks=[]):
+    prev_ssids = set([n[0] for n in avail_networks])
     while True:
         time.sleep(interval)
         new_list = get_known_wifi_list(password)
-        new_ssids = {s for s,_ in new_list}
+        new_ssids = {n[0] for n in new_list}
         if new_ssids != prev_ssids:
             print("Wi-Fi list changed, updating ESP32…")
             send_all_wifi_credentials(ser, new_list)
             prev_ssids = new_ssids
+            avail_networks = new_list
 
 def get_current_connection():
     res = subprocess.run(
@@ -140,15 +148,15 @@ def main():
 
     ser = serial.Serial(port, 115200, timeout=1)
     time.sleep(2)  # allow ESP32 to reset
-    initial = get_known_wifi_list(password)
-    if not initial:
+    avail_networks = get_known_wifi_list(password)
+    if not avail_networks:
         print("⚠️  No known networks in range. Exiting.")
         return
 
-    send_all_wifi_credentials(ser, initial)
+    send_all_wifi_credentials(ser, avail_networks)
     # start background poller
     poll_thread = threading.Thread(
-        target=poll_for_changes, args=(ser, password), daemon=True
+        target=poll_for_changes, args=(ser, password, 5, avail_networks), daemon=True
     )
     poll_thread.start()
 
