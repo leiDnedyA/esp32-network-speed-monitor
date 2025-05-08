@@ -59,7 +59,7 @@ def read_connection_file_as_root(password, filepath):
 def get_known_wifi_list(password):
     """Return list of (ssid, psk) for known networks currently in range."""
     available = get_available_wifi_ssids()
-    wifi_list = []
+    wifi_set = set()
     for fname in sorted(os.listdir(CONNECTIONS_PATH)):
         path = os.path.join(CONNECTIONS_PATH, fname)
         content = read_connection_file_as_root(password, path)
@@ -77,9 +77,9 @@ def get_known_wifi_list(password):
             ssid = cfg["wifi"].get("ssid")
             psk = cfg["wifi-security"].get("psk")
             if ssid and psk and ssid in available:
-                wifi_list.append((ssid, psk))
-    print(f"🏷️  Known in-range networks: {[s for s,_ in wifi_list]}")
-    return wifi_list
+                wifi_set.add((ssid, psk))
+    print(f"🏷️  Known in-range networks: {[s for s,_ in wifi_set]}")
+    return list(wifi_set)
 
 def send_all_wifi_credentials(ser, networks):
     payload = ",".join(f"{s}:{p}" for s,p in networks) + "\n"
