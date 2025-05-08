@@ -84,7 +84,7 @@ def get_known_wifi_list(password):
 def send_all_wifi_credentials(ser, networks):
     payload = ",".join(f"{s}:{p}" for s,p in networks) + "\n"
     ser.write(payload.encode())
-    print(f"📤 Sent {len(networks)} networks to ESP32")
+    print(f"Sent {len(networks)} networks to ESP32")
 
 def poll_for_changes(ser, password, interval=5):
     prev_ssids = set()
@@ -93,7 +93,7 @@ def poll_for_changes(ser, password, interval=5):
         new_list = get_known_wifi_list(password)
         new_ssids = {s for s,_ in new_list}
         if new_ssids != prev_ssids:
-            print("🔄 Wi-Fi list changed, updating ESP32…")
+            print("Wi-Fi list changed, updating ESP32…")
             send_all_wifi_credentials(ser, new_list)
             prev_ssids = new_ssids
 
@@ -108,19 +108,19 @@ def get_current_connection():
     return None
 
 def switch_to_network(ssid):
-    print(f"🔀 Switching to {ssid} …")
+    print(f"Switching to {ssid} …")
     subprocess.run(["nmcli", "device", "wifi", "connect", ssid])
 
 def listen_for_fastest_network(ser):
     current = get_current_connection()
-    print(f"📡 Listening for new-fastest (now on: {current})")
+    print(f"Listening for new-fastest (now on: {current})")
     while True:
         line = ser.readline().decode(errors="ignore").strip()
         if not line:
             continue
         if line.startswith("[NEW_FASTEST]"):
             best = line.split("]",1)[1].strip()
-            print(f"🚀 New fastest: {best}")
+            print(f"New fastest: {best}")
             if best != current:
                 switch_to_network(best)
                 current = best
