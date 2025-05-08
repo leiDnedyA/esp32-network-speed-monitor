@@ -1,17 +1,14 @@
 #include <WiFi.h>
 #include <HTTPClient.h>
 #include <vector>
-#include <map>
 
 struct Network { String ssid, password; };
 
 std::vector<Network> knownNetworks;
-std::map<String, float> networkSpeeds;
 
 // Parses a comma-separated "ssid:pass,ssid2:pass2,..." line
 void parseNetworkList(const String &data) {
   knownNetworks.clear();
-  networkSpeeds.clear();
   int start = 0;
   while (start < data.length()) {
     int comma = data.indexOf(',', start);
@@ -52,7 +49,6 @@ void testNetworkSpeed(const Network &net, float &fastestSpeed, String &currentFa
     if (WiFi.SSID(i) == net.ssid) { found = true; break; }
   }
   if (!found) {
-    networkSpeeds[net.ssid] = -1;
     Serial.println("⚠️  Not found: " + net.ssid);
     return;
   }
@@ -72,7 +68,6 @@ void testNetworkSpeed(const Network &net, float &fastestSpeed, String &currentFa
       float kb = payload.length() / 1024.0 / 1024.0;
       float secs = (t1 - t0) / 1000.0;
       float speed = kb / secs;
-      networkSpeeds[net.ssid] = speed;
       Serial.printf("✅ [%s] %.2f KB/s\n", net.ssid.c_str(), speed);
       if (speed > fastestSpeed) {
         fastestSpeed = speed;
