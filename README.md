@@ -55,7 +55,6 @@ Here are the steps to run the speed monitor:
 Currently, this tool is just a prototype, and doesn't support every edge case. Here are a list 
 of new functionalities that we would like to add:
 1. Support for Windows and Mac
-2. Support for WPA Enterprise Networks
-3. Support for networks with non-ascii characters in their names
-4. Ability to run multiple ESP32s in parallel to distribute the task of speed checking
-5. A daemon wrapper around the script to run it in the background on boot
+2. Support for networks with non-ascii characters in their names
+3. Ability to run multiple ESP32s in parallel to distribute the task of speed checking
+4. A daemon wrapper around the script to run it in the background on boot
