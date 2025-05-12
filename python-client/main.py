@@ -147,20 +147,18 @@ def main():
         return
 
     ser = serial.Serial(port, 115200, timeout=1)
-    time.sleep(2)  # allow ESP32 to reset
+    time.sleep(2)
     avail_networks = get_known_wifi_list(password)
     if not avail_networks:
         print("⚠️  No known networks in range. Exiting.")
         return
 
     send_all_wifi_credentials(ser, avail_networks)
-    # start background poller
     poll_thread = threading.Thread(
         target=poll_for_changes, args=(ser, password, 5, avail_networks), daemon=True
     )
     poll_thread.start()
 
-    # now block on listening for fastest
     listen_for_fastest_network(ser)
 
 if __name__ == "__main__":

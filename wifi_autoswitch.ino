@@ -16,7 +16,7 @@ String currentFastest = "";
 float prevFastestSpeed = 0.0;
 
 // Parses a comma-separated list of networks in the format:
-// "" | "ssid:password" | "ssid:username:password" | ...
+// "" | "ssid:password" | "ssid:username:password"
 void parseNetworkList(const String &data) {
   knownNetworks.clear();
   int start = 0;
@@ -107,8 +107,8 @@ void testNetworkSpeed(const Network &net, float &fastestSpeed, String &currentFa
     if (httpCode == HTTP_CODE_OK) {
       WiFiClient *stream = http.getStreamPtr();
       const size_t bufSize = 512;
-      uint8_t      buffer[bufSize];
-      size_t       totalBytes = 0;
+      uint8_t buffer[bufSize];
+      size_t totalBytes = 0;
       unsigned long t0 = millis();
       const unsigned long maxDurationMs = 5000;
 
@@ -138,7 +138,7 @@ void testNetworkSpeed(const Network &net, float &fastestSpeed, String &currentFa
                     seconds);
 
       if (speedKBs > fastestSpeed) {
-        fastestSpeed    = speedKBs;
+        fastestSpeed = speedKBs;
         currentFastest = net.ssid;
       }
     } else {
@@ -173,7 +173,6 @@ void loop() {
   processSerial();
 
   Serial.printf("sweeping...\n");
-  // 2) Sweep through current list
   for (auto &net : knownNetworks) {
     processSerial();
     testNetworkSpeed(net, fastestSpeed, currentFastest);
