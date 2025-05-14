@@ -65,6 +65,23 @@ bool processSerial() {
   return false;
 }
 
+void resetWifiAuth() {
+  WiFi.disconnect(true);
+  delay(100); // Small delay to ensure disconnection
+
+  // Clear WPA2 Enterprise credentials
+  esp_wifi_sta_wpa2_ent_clear_identity();
+  esp_wifi_sta_wpa2_ent_clear_username();
+  esp_wifi_sta_wpa2_ent_clear_password();
+  esp_wifi_sta_wpa2_ent_disable();
+
+  WiFi.mode(WIFI_OFF);
+  delay(100);
+  WiFi.mode(WIFI_STA);
+
+  Serial.println("WPA2 Enterprise credentials cleared and WiFi reset.");
+}
+
 void testNetworkSpeed(const Network &net, float &fastestSpeed, String &currentFastest) {
   Serial.printf("Testing network speed for %s.\n", net.ssid.c_str());
   bool wifiConnected = false;
@@ -157,7 +174,7 @@ void testNetworkSpeed(const Network &net, float &fastestSpeed, String &currentFa
     }
   }
 
-  WiFi.disconnect(true);
+  resetWifiAuth();
   delay(500);
 }
 
