@@ -187,11 +187,14 @@ void loop() {
   static float fastestSpeed = -1;
   static String previousFastest = currentFastest;
 
-  processSerial();
+  // Re‑read the list of networks once up front
+  if (processSerial()) {
+    fastestSpeed = -1;             // optionally reset your benchmarks
+    previousFastest = currentFastest;
+  }
 
   Serial.printf("sweeping...\n");
   for (auto &net : knownNetworks) {
-    processSerial();
     testNetworkSpeed(net, fastestSpeed, currentFastest);
   }
 
